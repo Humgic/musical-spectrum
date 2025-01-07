@@ -1,4 +1,4 @@
-# Spectrum Analyzer
+# Musical Spectrum Analyzer
 
 一个强大的音频频谱图生成工具，支持多种音频格式（WAV、FLAC、OGG等）。
 
@@ -15,8 +15,8 @@
 使用 Homebrew 安装：
 
 ```bash
-brew tap Humgic/spectrum
-brew install spectrum
+brew tap Humgic/musical-spectrum
+brew install musical-spectrum
 ```
 
 ## 使用方法

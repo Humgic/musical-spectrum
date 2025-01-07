@@ -1,7 +1,7 @@
 class Spectrum < Formula
   desc "音频频谱图生成工具"
-  homepage "https://github.com/Humgic/Spectrum"
-  url "https://github.com/Humgic/Spectrum/archive/refs/tags/v1.0.0.tar.gz"
+  homepage "https://github.com/Humgic/musical-spectrum"
+  url "https://github.com/Humgic/musical-spectrum/archive/refs/tags/v1.0.0.tar.gz"
   sha256 "YOUR_TARBALL_SHA256"
   license "MIT"
   
