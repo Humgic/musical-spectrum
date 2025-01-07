@@ -1,3 +1,0 @@
-/home/wsy/Spectrum/build/CMakeFiles/spectrum_analyzer.dir
-/home/wsy/Spectrum/build/CMakeFiles/edit_cache.dir
-/home/wsy/Spectrum/build/CMakeFiles/rebuild_cache.dir
