@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(spectrum_analyzer VERSION 3.0.0)
+project(spectrum_analyzer VERSION 3.1.0)
 
 # 配置版本信息
 configure_file(
