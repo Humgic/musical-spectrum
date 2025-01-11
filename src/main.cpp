@@ -1,4 +1,4 @@
-#include "spectrogram.hpp"
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <sndfile.h>
@@ -8,6 +8,11 @@
 #include <cmath>
 #include <regex>
 #include <optional>
+#include <algorithm>
+#include "version.hpp"
+#include "spectrogram.hpp"
+
+namespace fs = std::filesystem;
 
 // 音符到频率的转换函数
 double noteToFreq(const std::string& note) {
@@ -37,8 +42,52 @@ double noteToFreq(const std::string& note) {
     return 440.0 * std::pow(2.0, (midiNote - 69) / 12.0);
 }
 
+void processAudioFile(const std::string& inputFile, const std::string& outputFile, const Spectrogram::Config& config) {
+    // 打开音频文件
+    SF_INFO sfInfo;
+    memset(&sfInfo, 0, sizeof(sfInfo));
+    SNDFILE* sndFile = sf_open(inputFile.c_str(), SFM_READ, &sfInfo);
+    
+    if (!sndFile) {
+        std::cerr << "无法打开音频文件: " << inputFile << std::endl;
+        return;
+    }
+    
+    // 读取音频数据
+    std::vector<double> audioData(sfInfo.frames * sfInfo.channels);
+    sf_read_double(sndFile, audioData.data(), audioData.size());
+    sf_close(sndFile);
+    
+    // 如果是立体声，转换为单声道
+    std::vector<double> monoData;
+    if (sfInfo.channels == 2) {
+        monoData.resize(sfInfo.frames);
+        for (sf_count_t i = 0; i < sfInfo.frames; ++i) {
+            monoData[i] = (audioData[i*2] + audioData[i*2+1]) / 2.0;
+        }
+    } else {
+        monoData = std::move(audioData);
+    }
+    
+    // 计算频谱图
+    const int fftSize = 2048;
+    const int hopSize = sfInfo.samplerate / config.samples_per_sec;
+    const int numFrames = (monoData.size() - fftSize) / hopSize + 1;
+    
+    // 创建频谱数据
+    std::vector<std::vector<double>> specData(numFrames, std::vector<double>(fftSize/2 + 1));
+    
+    // ... FFT计算代码 ...
+    
+    // 生成频谱图
+    Spectrogram spectrogram;
+    spectrogram.generateSpectrogram(specData, outputFile, sfInfo.samplerate, config);
+    
+    std::cout << "已生成频谱图: " << outputFile << std::endl;
+}
+
 void printUsage(const char* programName) {
-    std::cout << "用法: " << programName << " <输入音频文件> <输出图像文件> [选项]\n"
+    std::cout << "用法: " << programName << " <输入音频文件/文件夹> <输出图像文件/文件夹> [选项]\n"
               << "选项:\n"
               << "  -h            显示此帮助信息\n"
               << "  -b <秒>      开始时间（默认：0.0秒）\n"
@@ -48,24 +97,32 @@ void printUsage(const char* programName) {
               << "  -l <音符>    最低音符（默认：20Hz，人耳可听最低频率）\n"
               << "  -u <音符>    最高音符（默认：20kHz，人耳可听最高频率）\n"
               << "\n音符格式示例：C4（中央C）、D#3、Gb5 等\n"
-              << "\n注意：开始时间、结束时间、持续时间中只能指定其中两个\n"
+              << "\n注意：\n"
+              << "1. 开始时间、结束时间、持续时间中只能指定其中两个\n"
+              << "2. 当输入为文件夹时，将处理文件夹中所有支持的音频文件\n"
+              << "   支持的格式：WAV, FLAC, OGG 等\n"
               << std::endl;
 }
 
 int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "--version") {
+        std::cout << "Spectrum Analyzer version " << SPECTRUM_VERSION << std::endl;
+        return 0;
+    }
+
     if (argc < 2 || strcmp(argv[1], "-h") == 0) {
         printUsage(argv[0]);
         return argc < 2 ? 1 : 0;
     }
 
     if (argc < 3) {
-        std::cerr << "错误：需要指定输入和输出文件\n";
+        std::cerr << "错误：需要指定输入和输出路径\n";
         printUsage(argv[0]);
         return 1;
     }
 
-    const char* inputFile = argv[1];
-    const char* outputFile = argv[2];
+    const std::string inputPath = argv[1];
+    const std::string outputPath = argv[2];
     
     // 默认配置
     Spectrogram::Config config;
@@ -142,46 +199,45 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 打开音频文件
-    SF_INFO sfInfo;
-    memset(&sfInfo, 0, sizeof(sfInfo));
-    SNDFILE* sndFile = sf_open(inputFile, SFM_READ, &sfInfo);
-    
-    if (!sndFile) {
-        std::cerr << "无法打开音频文件: " << inputFile << std::endl;
-        return 1;
-    }
-    
-    // 读取音频数据
-    std::vector<double> audioData(sfInfo.frames * sfInfo.channels);
-    sf_read_double(sndFile, audioData.data(), audioData.size());
-    sf_close(sndFile);
-    
-    // 如果是立体声，转换为单声道
-    std::vector<double> monoData;
-    if (sfInfo.channels == 2) {
-        monoData.resize(sfInfo.frames);
-        for (sf_count_t i = 0; i < sfInfo.frames; ++i) {
-            monoData[i] = (audioData[i*2] + audioData[i*2+1]) / 2.0;
+    // 检查输入路径是文件还是目录
+    if (fs::is_directory(inputPath)) {
+        // 确保输出路径存在
+        fs::create_directories(outputPath);
+        
+        // 遍历输入目录
+        for (const auto& entry : fs::directory_iterator(inputPath)) {
+            if (!entry.is_regular_file()) continue;
+            
+            // 检查文件扩展名
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            
+            if (ext == ".wav" || ext == ".flac" || ext == ".ogg") {
+                // 构建输出文件路径
+                std::string outputFile = (fs::path(outputPath) / entry.path().filename()).string();
+                outputFile = outputFile.substr(0, outputFile.find_last_of('.')) + ".png";
+                
+                // 处理音频文件
+                processAudioFile(entry.path().string(), outputFile, config);
+            }
         }
     } else {
-        monoData = std::move(audioData);
+        // 单个文件处理
+        if (!fs::is_regular_file(inputPath)) {
+            std::cerr << "错误：输入文件不存在\n";
+            return 1;
+        }
+        
+        // 如果输出路径是目录，在其中创建输出文件
+        std::string outputFile = outputPath;
+        if (fs::is_directory(outputPath)) {
+            fs::path inputFilePath(inputPath);
+            outputFile = (fs::path(outputPath) / inputFilePath.filename()).string();
+            outputFile = outputFile.substr(0, outputFile.find_last_of('.')) + ".png";
+        }
+        
+        processAudioFile(inputPath, outputFile, config);
     }
     
-    // 计算频谱图
-    const int fftSize = 2048;
-    const int hopSize = sfInfo.samplerate / config.samples_per_sec;
-    const int numFrames = (monoData.size() - fftSize) / hopSize + 1;
-    
-    // 创建频谱数据
-    std::vector<std::vector<double>> specData(numFrames, std::vector<double>(fftSize/2 + 1));
-    
-    // ... 这里添加FFT计算代码 ...
-    
-    // 生成频谱图
-    Spectrogram spectrogram;
-    spectrogram.generateSpectrogram(specData, outputFile, sfInfo.samplerate, config);
-    
-    std::cout << "频谱图已生成: " << outputFile << std::endl;
     return 0;
 } 

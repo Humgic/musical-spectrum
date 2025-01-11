@@ -1,9 +1,23 @@
 cmake_minimum_required(VERSION 3.10)
-project(spectrum_analyzer)
+project(spectrum_analyzer VERSION 3.0.0)
+
+# 配置版本信息
+configure_file(
+    ${CMAKE_SOURCE_DIR}/include/version.hpp.in
+    ${CMAKE_BINARY_DIR}/include/version.hpp
+)
 
 # 设置C++标准
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# macOS特定配置
+if(APPLE)
+    # 添加Homebrew安装路径
+    list(APPEND CMAKE_PREFIX_PATH "/usr/local/opt" "/opt/homebrew/opt")
+    # 确保能找到dylib
+    set(CMAKE_MACOSX_RPATH ON)
+endif()
 
 # 启用测试
 enable_testing()
@@ -13,12 +27,22 @@ find_package(OpenCV REQUIRED)
 find_package(GTest REQUIRED)
 
 # 查找 FFTW3
-find_library(FFTW3_LIBRARIES NAMES fftw3 REQUIRED)
-find_path(FFTW3_INCLUDE_DIRS fftw3.h REQUIRED)
+if(APPLE)
+    find_library(FFTW3_LIBRARIES NAMES fftw3 PATHS /usr/local/opt/fftw/lib /opt/homebrew/opt/fftw/lib REQUIRED)
+    find_path(FFTW3_INCLUDE_DIRS fftw3.h PATHS /usr/local/opt/fftw/include /opt/homebrew/opt/fftw/include REQUIRED)
+else()
+    find_library(FFTW3_LIBRARIES NAMES fftw3 REQUIRED)
+    find_path(FFTW3_INCLUDE_DIRS fftw3.h REQUIRED)
+endif()
 
 # 查找 SndFile
-find_library(SNDFILE_LIBRARIES NAMES sndfile REQUIRED)
-find_path(SNDFILE_INCLUDE_DIRS sndfile.h REQUIRED)
+if(APPLE)
+    find_library(SNDFILE_LIBRARIES NAMES sndfile PATHS /usr/local/opt/libsndfile/lib /opt/homebrew/opt/libsndfile/lib REQUIRED)
+    find_path(SNDFILE_INCLUDE_DIRS sndfile.h PATHS /usr/local/opt/libsndfile/include /opt/homebrew/opt/libsndfile/include REQUIRED)
+else()
+    find_library(SNDFILE_LIBRARIES NAMES sndfile REQUIRED)
+    find_path(SNDFILE_INCLUDE_DIRS sndfile.h REQUIRED)
+endif()
 
 # 添加库目标
 add_library(spectrum_lib
@@ -28,6 +52,7 @@ add_library(spectrum_lib
 
 target_include_directories(spectrum_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_BINARY_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
     ${FFTW3_INCLUDE_DIRS}
     ${SNDFILE_INCLUDE_DIRS}
@@ -42,6 +67,11 @@ target_link_libraries(spectrum_lib
 # 添加可执行文件
 add_executable(spectrum_analyzer src/main.cpp)
 target_link_libraries(spectrum_analyzer PRIVATE spectrum_lib)
+
+# 在macOS上链接stdc++fs库（如果需要）
+if(APPLE)
+    target_link_libraries(spectrum_analyzer PRIVATE stdc++fs)
+endif()
 
 # 添加测试
 add_executable(spectrum_test tests/test_main.cpp)

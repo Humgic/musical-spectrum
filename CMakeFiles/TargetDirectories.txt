@@ -1,0 +1,10 @@
+/home/wsy/Spectrum/CMakeFiles/spectrum_lib.dir
+/home/wsy/Spectrum/CMakeFiles/spectrum_analyzer.dir
+/home/wsy/Spectrum/CMakeFiles/spectrum_test.dir
+/home/wsy/Spectrum/CMakeFiles/test.dir
+/home/wsy/Spectrum/CMakeFiles/edit_cache.dir
+/home/wsy/Spectrum/CMakeFiles/rebuild_cache.dir
+/home/wsy/Spectrum/CMakeFiles/list_install_components.dir
+/home/wsy/Spectrum/CMakeFiles/install.dir
+/home/wsy/Spectrum/CMakeFiles/install/local.dir
+/home/wsy/Spectrum/CMakeFiles/install/strip.dir
