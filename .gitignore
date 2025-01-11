@@ -1,4 +1,29 @@
+# 构建目录
 build/
-*.tar.gz
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+*.a
+msa
+
+# 测试目录
+test_input/
+test_output/
+
+# IDE配置
 .vscode/
+.idea/
+
+# 编译输出
+spectrum_analyzer
+spectrum_test
+
+# macOS系统文件
+.DS_Store
+
+# 临时文件
+*.swp
+*~
 
