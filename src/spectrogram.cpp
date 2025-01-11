@@ -1,133 +1,229 @@
 #include "spectrogram.hpp"
-#include <algorithm>
 #include <cmath>
-#include <iomanip>
-#include <sstream>
-#include <numeric>
+#include <algorithm>
 
-Spectrogram::Spectrogram() {}
+#ifdef __APPLE__
+#include <CoreGraphics/CoreGraphics.h>
+#else
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+#endif
 
 void Spectrogram::generateSpectrogram(const std::vector<std::vector<double>>& specData,
-                                    const std::string& outputPath,
+                                    const std::string& outputFile,
                                     int sampleRate,
-                                    const Config& config,
-                                    int height, int width) {
-    // 生成频谱图
-    cv::Mat spectrogramImage = convertToImage(specData, height, width, sampleRate, config);
-    
-    // 应用颜色映射
-    applyColorMap(spectrogramImage);
-    
-    // 添加音高标注
-    int fftSize = (specData[0].size() - 1) * 2;
-    addPitchLabels(spectrogramImage, sampleRate, fftSize, config);
-    
-    cv::imwrite(outputPath, spectrogramImage);
+                                    const Config& config) {
+    const int width = 3200;  // 默认宽度
+    const int height = 2400; // 默认高度
+
+#ifdef __APPLE__
+    generateImageCG(specData, outputFile, width, height, config.min_freq, config.max_freq, sampleRate);
+#else
+    generateImageStb(specData, outputFile, width, height, config.min_freq, config.max_freq, sampleRate);
+#endif
 }
 
-cv::Mat Spectrogram::convertToImage(const std::vector<std::vector<double>>& specData,
-                                  int height, int width, int sampleRate,
-                                  const Config& config) {
-    if (specData.empty() || specData[0].empty()) {
-        throw std::runtime_error("Empty spectrogram data");
-    }
+#ifdef __APPLE__
+void Spectrogram::generateImageCG(const std::vector<std::vector<double>>& data,
+                                 const std::string& outputFile,
+                                 int width, int height,
+                                 double minFreq, double maxFreq,
+                                 int sampleRate) {
+    // 创建颜色空间
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceGenericRGB);
     
-    // 创建单通道图像
-    cv::Mat image(height, width, CV_8UC1);
+    // 创建上下文
+    CGContextRef context = CGBitmapContextCreate(nullptr,
+                                               width, height,
+                                               8, // bits per component
+                                               width * 4, // bytes per row
+                                               colorSpace,
+                                               kCGImageAlphaPremultipliedLast);
     
-    // 计算时间范围
-    int startFrame = config.start_time * config.samples_per_sec;
-    int numFrames = (config.duration < 0) ? 
-                   specData.size() - startFrame : 
-                   config.duration * config.samples_per_sec;
-    numFrames = std::min(numFrames, static_cast<int>(specData.size() - startFrame));
+    // 设置背景为黑色
+    CGContextSetRGBFillColor(context, 0, 0, 0, 1);
+    CGContextFillRect(context, CGRectMake(0, 0, width, height));
     
-    // 找到最大最小值用于归一化
-    double minVal = std::numeric_limits<double>::max();
-    double maxVal = std::numeric_limits<double>::lowest();
-    
-    for (int i = startFrame; i < startFrame + numFrames; ++i) {
-        const auto& row = specData[i];
-        auto [min, max] = std::minmax_element(row.begin(), row.end());
-        minVal = std::min(minVal, *min);
-        maxVal = std::max(maxVal, *max);
-    }
-    
-    double range = maxVal - minVal;
-    int freqBins = specData[0].size();
-    
-    // 对数频率映射
-    for (int x = 0; x < width; ++x) {
-        int timeStep = startFrame + x * numFrames / width;
-        
-        for (int y = 0; y < height; ++y) {
-            double freq = config.min_freq * pow(config.max_freq/config.min_freq, 
-                                             (height-1-y)/(double)(height-1));
-            int freqBin = round(freq * freqBins / (sampleRate/2.0));
+    // 绘制频谱数据
+    for (size_t x = 0; x < data.size() && x < width; ++x) {
+        for (size_t y = 0; y < data[x].size(); ++y) {
+            double freq = y * sampleRate / 2.0 / data[x].size();
+            if (freq < minFreq || freq > maxFreq) continue;
             
-            if (freqBin >= freqBins) freqBin = freqBins - 1;
-            if (freqBin < 0) freqBin = 0;
+            int pixelY = height - 1 - static_cast<int>(freqToY(freq, height, minFreq, maxFreq));
+            if (pixelY < 0 || pixelY >= height) continue;
             
-            double value = specData[timeStep][freqBin];
-            double normalizedValue = (value - minVal) / range;
-            image.at<uchar>(y, x) = cv::saturate_cast<uchar>(normalizedValue * 255);
+            // 将频谱数据转换为颜色
+            double intensity = data[x][y];
+            double hue = 0.7 * (1.0 - std::min(1.0, intensity)); // 从蓝到红
+            
+            // HSV to RGB 转换
+            double h = hue * 6.0;
+            double s = 1.0;
+            double v = std::min(1.0, intensity * 2.0);
+            
+            double r, g, b;
+            int i = static_cast<int>(h);
+            double f = h - i;
+            double p = v * (1 - s);
+            double q = v * (1 - s * f);
+            double t = v * (1 - s * (1 - f));
+            
+            switch (i % 6) {
+                case 0: r = v; g = t; b = p; break;
+                case 1: r = q; g = v; b = p; break;
+                case 2: r = p; g = v; b = t; break;
+                case 3: r = p; g = q; b = v; break;
+                case 4: r = t; g = p; b = v; break;
+                case 5: r = v; g = p; b = q; break;
+                default: r = g = b = 0; break;
+            }
+            
+            CGContextSetRGBFillColor(context, r, g, b, 1);
+            CGContextFillRect(context, CGRectMake(x, pixelY, 1, 1));
         }
     }
     
-    return image;
-}
-
-std::pair<std::string, int> Spectrogram::getNoteAndOctave(double freq) {
-    // A4 = 440Hz
-    const double A4_FREQ = 440.0;
-    const int A4_MIDI = 69;
-    const std::string NOTE_NAMES[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    // 添加音符标注
+    CGContextSetRGBStrokeColor(context, 1, 1, 1, 0.5); // 白色，半透明
+    CGContextSetLineWidth(context, 1);
     
-    double steps = 12 * log2(freq / A4_FREQ);
-    int midiNote = round(steps) + A4_MIDI;
-    int octave = (midiNote / 12) - 1;
-    int noteIndex = midiNote % 12;
+    // 设置字体
+    CGContextSelectFont(context, "Helvetica", 12, kCGEncodingMacRoman);
+    CGContextSetRGBFillColor(context, 1, 1, 1, 1);
+    CGContextSetTextDrawingMode(context, kCGTextFill);
     
-    if (noteIndex < 0) noteIndex += 12;
-    return {NOTE_NAMES[noteIndex], octave};
-}
-
-bool Spectrogram::isWhiteKey(const std::string& note) {
-    return note.length() == 1;  // 白键音符名是单个字母（C,D,E,F,G,A,B）
-}
-
-void Spectrogram::addPitchLabels(cv::Mat& image, int sampleRate, int fftSize, const Config& config) {
-    const int labelWidth = 50;
-    cv::Mat withLabels;
-    cv::copyMakeBorder(image, withLabels, 0, 0, labelWidth, 0, cv::BORDER_CONSTANT, cv::Scalar(255, 255, 255));
-    
-    // 标注所有白键（C3-C5）
-    for (int midiNote = 48; midiNote <= 72; ++midiNote) {  // C3(48) to C5(72)
-        double freq = 440.0 * pow(2.0, (midiNote - 69) / 12.0);  // A4(69) = 440Hz
-        if (freq >= config.min_freq && freq <= config.max_freq) {
-            auto [note, octave] = getNoteAndOctave(freq);
-            if (isWhiteKey(note)) {
-                int y = round(freqToY(freq, image.rows, config.min_freq, config.max_freq));
-                cv::line(withLabels, cv::Point(0, y), cv::Point(labelWidth-5, y), 
-                        cv::Scalar(0, 0, 0), 1);
-                cv::putText(withLabels, note + std::to_string(octave), 
-                           cv::Point(5, y+4), cv::FONT_HERSHEY_SIMPLEX, 0.4, 
-                           cv::Scalar(0, 0, 0), 1);
+    // 绘制音符刻度
+    for (int octave = 1; octave <= 8; ++octave) {
+        const char* notes[] = {"C", "D", "E", "F", "G", "A", "B"};
+        for (const char* note : notes) {
+            std::string noteStr = std::string(note) + std::to_string(octave);
+            double freq = 440.0 * std::pow(2.0, (getNoteAndOctave(noteStr).first - 69) / 12.0);
+            if (freq >= minFreq && freq <= maxFreq) {
+                int y = height - 1 - static_cast<int>(freqToY(freq, height, minFreq, maxFreq));
+                
+                // 绘制横线
+                CGContextMoveToPoint(context, 0, y);
+                CGContextAddLineToPoint(context, width, y);
+                CGContextStrokePath(context);
+                
+                // 绘制文本
+                CGContextSaveGState(context);
+                CGContextTranslateCTM(context, 5, y - 6);
+                CGContextShowText(context, noteStr.c_str(), noteStr.length());
+                CGContextRestoreGState(context);
             }
         }
     }
     
-    image = withLabels;
+    // 创建图像
+    CGImageRef image = CGBitmapContextCreateImage(context);
+    
+    // 创建URL
+    CFURLRef url = CFURLCreateFromFileSystemRepresentation(nullptr,
+                                                         (const UInt8*)outputFile.c_str(),
+                                                         outputFile.length(),
+                                                         false);
+    
+    // 创建图像目标
+    CGImageDestinationRef destination = CGImageDestinationCreateWithURL(url,
+                                                                       kUTTypePNG,
+                                                                       1,
+                                                                       nullptr);
+    
+    // 添加图像到目标
+    CGImageDestinationAddImage(destination, image, nullptr);
+    
+    // 完成图像写入
+    CGImageDestinationFinalize(destination);
+    
+    // 清理资源
+    CFRelease(destination);
+    CFRelease(url);
+    CGImageRelease(image);
+    CGContextRelease(context);
+    CGColorSpaceRelease(colorSpace);
 }
-
-void Spectrogram::applyColorMap(cv::Mat& image) {
-    cv::applyColorMap(image, image, cv::COLORMAP_JET);
+#else
+void Spectrogram::generateImageStb(const std::vector<std::vector<double>>& data,
+                                  const std::string& outputFile,
+                                  int width, int height,
+                                  double minFreq, double maxFreq,
+                                  int sampleRate) {
+    // 创建图像数据
+    std::vector<unsigned char> imageData(width * height * 3, 0);
+    
+    // 绘制频谱数据
+    for (size_t x = 0; x < data.size() && x < width; ++x) {
+        for (size_t y = 0; y < data[x].size(); ++y) {
+            double freq = y * sampleRate / 2.0 / data[x].size();
+            if (freq < minFreq || freq > maxFreq) continue;
+            
+            int pixelY = height - 1 - static_cast<int>(freqToY(freq, height, minFreq, maxFreq));
+            if (pixelY < 0 || pixelY >= height) continue;
+            
+            // 将频谱数据转换为颜色
+            double intensity = data[x][y];
+            double hue = 0.7 * (1.0 - std::min(1.0, intensity)); // 从蓝到红
+            
+            // HSV to RGB 转换
+            double h = hue * 6.0;
+            double s = 1.0;
+            double v = std::min(1.0, intensity * 2.0);
+            
+            double r, g, b;
+            int i = static_cast<int>(h);
+            double f = h - i;
+            double p = v * (1 - s);
+            double q = v * (1 - s * f);
+            double t = v * (1 - s * (1 - f));
+            
+            switch (i % 6) {
+                case 0: r = v; g = t; b = p; break;
+                case 1: r = q; g = v; b = p; break;
+                case 2: r = p; g = v; b = t; break;
+                case 3: r = p; g = q; b = v; break;
+                case 4: r = t; g = p; b = v; break;
+                case 5: r = v; g = p; b = q; break;
+                default: r = g = b = 0; break;
+            }
+            
+            int idx = (pixelY * width + x) * 3;
+            imageData[idx] = static_cast<unsigned char>(r * 255);
+            imageData[idx + 1] = static_cast<unsigned char>(g * 255);
+            imageData[idx + 2] = static_cast<unsigned char>(b * 255);
+        }
+    }
+    
+    // 保存图像
+    stbi_write_png(outputFile.c_str(), width, height, 3, imageData.data(), width * 3);
 }
+#endif
 
 double Spectrogram::freqToY(double freq, int height, double minFreq, double maxFreq) {
-    // 对数映射
-    double logFreq = log2(freq);
-    double logMin = log2(minFreq);
-    double logMax = log2(maxFreq);
-    return height * (1.0 - (logFreq - logMin) / (logMax - logMin));
+    // 使用对数刻度
+    double logMin = std::log2(minFreq);
+    double logMax = std::log2(maxFreq);
+    double logFreq = std::log2(freq);
+    return height * (logFreq - logMin) / (logMax - logMin);
+}
+
+std::pair<std::string, int> Spectrogram::getNoteAndOctave(double freq) {
+    // MIDI音符号到音符名的转换
+    static const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    
+    // 计算MIDI音符号
+    double midiNote = 69 + 12 * std::log2(freq / 440.0);
+    int noteNumber = static_cast<int>(std::round(midiNote));
+    
+    // 计算八度和音符
+    int octave = (noteNumber / 12) - 1;
+    int noteIndex = noteNumber % 12;
+    if (noteIndex < 0) noteIndex += 12;
+    
+    return {noteNames[noteIndex], octave};
+}
+
+bool Spectrogram::isWhiteKey(const std::string& note) {
+    return note.length() == 1; // 没有升降号的音符是白键
 } 

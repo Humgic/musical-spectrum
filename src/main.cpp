@@ -43,6 +43,8 @@ double noteToFreq(const std::string& note) {
 }
 
 void processAudioFile(const std::string& inputFile, const std::string& outputFile, const Spectrogram::Config& config) {
+    std::cout << "处理文件: " << inputFile << std::endl;
+    
     // 打开音频文件
     SF_INFO sfInfo;
     memset(&sfInfo, 0, sizeof(sfInfo));
@@ -50,8 +52,14 @@ void processAudioFile(const std::string& inputFile, const std::string& outputFil
     
     if (!sndFile) {
         std::cerr << "无法打开音频文件: " << inputFile << std::endl;
+        std::cerr << "错误信息: " << sf_strerror(nullptr) << std::endl;
         return;
     }
+    
+    std::cout << "音频信息: " << std::endl;
+    std::cout << "  采样率: " << sfInfo.samplerate << " Hz" << std::endl;
+    std::cout << "  声道数: " << sfInfo.channels << std::endl;
+    std::cout << "  总帧数: " << sfInfo.frames << std::endl;
     
     // 读取音频数据
     std::vector<double> audioData(sfInfo.frames * sfInfo.channels);
@@ -61,6 +69,7 @@ void processAudioFile(const std::string& inputFile, const std::string& outputFil
     // 如果是立体声，转换为单声道
     std::vector<double> monoData;
     if (sfInfo.channels == 2) {
+        std::cout << "转换立体声到单声道..." << std::endl;
         monoData.resize(sfInfo.frames);
         for (sf_count_t i = 0; i < sfInfo.frames; ++i) {
             monoData[i] = (audioData[i*2] + audioData[i*2+1]) / 2.0;
@@ -73,6 +82,11 @@ void processAudioFile(const std::string& inputFile, const std::string& outputFil
     const int fftSize = 2048;
     const int hopSize = sfInfo.samplerate / config.samples_per_sec;
     const int numFrames = (monoData.size() - fftSize) / hopSize + 1;
+    
+    std::cout << "生成频谱图..." << std::endl;
+    std::cout << "  FFT大小: " << fftSize << std::endl;
+    std::cout << "  跳跃大小: " << hopSize << std::endl;
+    std::cout << "  总帧数: " << numFrames << std::endl;
     
     // 创建频谱数据
     std::vector<std::vector<double>> specData(numFrames, std::vector<double>(fftSize/2 + 1));
@@ -105,89 +119,124 @@ void printUsage(const char* programName) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc > 1 && std::string(argv[1]) == "--version") {
-        std::cout << "Spectrum Analyzer version " << SPECTRUM_VERSION << std::endl;
+    std::cout << "Debug: Program started with " << argc << " arguments" << std::endl;
+    for (int i = 0; i < argc; ++i) {
+        std::cout << "Debug: argv[" << i << "] = " << argv[i] << std::endl;
+    }
+    
+    // 获取程序名称（不包含路径）
+    std::string programName = fs::path(argv[0]).filename().string();
+    std::cout << "Debug: Program name = " << programName << std::endl;
+    
+    if (argc > 1 && (std::string(argv[1]) == "--version" || std::string(argv[1]) == "-v")) {
+        std::cout << "Debug: Showing version info" << std::endl;
+        std::cout << "Debug: SPECTRUM_VERSION = " << SPECTRUM_VERSION << std::endl;
+        std::cout << "Debug: SPECTRUM_VERSION_MAJOR = " << SPECTRUM_VERSION_MAJOR << std::endl;
+        std::cout << "Debug: SPECTRUM_VERSION_MINOR = " << SPECTRUM_VERSION_MINOR << std::endl;
+        std::cout << "Debug: SPECTRUM_VERSION_PATCH = " << SPECTRUM_VERSION_PATCH << std::endl;
+        std::cout << "Musical Spectrum Analyzer version " << SPECTRUM_VERSION << std::endl;
+        std::cout.flush();
         return 0;
     }
 
-    if (argc < 2 || strcmp(argv[1], "-h") == 0) {
-        printUsage(argv[0]);
+    if (argc < 3 || (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help"))) {
+        std::cout << "用法: " << programName << " <输入文件/目录> <输出目录> [选项]" << std::endl;
+        std::cout << "选项:" << std::endl;
+        std::cout << "  -h                            显示此帮助信息" << std::endl;
+        std::cout << "  -b <秒>                       开始时间（默认：0.0秒）" << std::endl;
+        std::cout << "  -e <秒>                       结束时间" << std::endl;
+        std::cout << "  -d <秒>                       持续时间（默认：直到结束）" << std::endl;
+        std::cout << "  -s <n>                        每秒采样次数（默认：100）" << std::endl;
+        std::cout << "  -l <音符>                     最低音符（默认：20Hz）" << std::endl;
+        std::cout << "  -u <音符>                     最高音符（默认：20kHz）" << std::endl;
+        std::cout << "\n音符格式示例：C4（中央C）、D#3、Gb5 等\n";
+        std::cout << "\n支持的音频格式：WAV, FLAC, OGG 等\n";
+        std::cout << "\n注意：开始时间、结束时间、持续时间中只能指定其中两个\n";
+        std::cout.flush();
         return argc < 2 ? 1 : 0;
     }
 
-    if (argc < 3) {
-        std::cerr << "错误：需要指定输入和输出路径\n";
-        printUsage(argv[0]);
-        return 1;
-    }
+    // 解析输入和输出路径
+    std::string inputPath = argv[1];
+    std::string outputPath = argv[2];
+    
+    std::cout << "输入路径: " << inputPath << std::endl;
+    std::cout << "输出路径: " << outputPath << std::endl;
 
-    const std::string inputPath = argv[1];
-    const std::string outputPath = argv[2];
-    
-    // 默认配置
+    // 配置选项
     Spectrogram::Config config;
-    config.min_freq = 20.0;    // 人耳可听最低频率
-    config.max_freq = 20000.0; // 人耳可听最高频率
-    
-    // 用于检查时间参数的计数
     std::optional<double> endTime;
     bool hasStartTime = false;
     bool hasDuration = false;
     bool hasEndTime = false;
     
-    // 解析命令行参数
+    // 解析命令行选项
     for (int i = 3; i < argc; i++) {
+        std::string arg = argv[i];
+        if (i + 1 >= argc) {
+            std::cerr << "错误：选项 " << arg << " 需要一个参数" << std::endl;
+            return 1;
+        }
+        
         try {
-            if (argv[i][0] != '-' || strlen(argv[i]) != 2) {
-                std::cerr << "无效的选项: " << argv[i] << std::endl;
-                return 1;
+            if (arg == "-s") {
+                config.samples_per_sec = std::stoi(argv[++i]);
+                std::cout << "设置每秒采样数为: " << config.samples_per_sec << std::endl;
             }
-            
-            if (++i >= argc) {
-                std::cerr << "选项 " << argv[i-1] << " 需要一个参数" << std::endl;
-                return 1;
+            else if (arg == "-l") {
+                try {
+                    config.min_freq = noteToFreq(argv[++i]);
+                    std::cout << "设置最低频率为: " << config.min_freq << " Hz" << std::endl;
+                } catch (const std::exception& e) {
+                    config.min_freq = std::stod(argv[i]);
+                    std::cout << "设置最低频率为: " << config.min_freq << " Hz" << std::endl;
+                }
             }
-
-            switch (argv[i-1][1]) {
-                case 'b':
-                    config.start_time = std::stod(argv[i]);
-                    hasStartTime = true;
-                    break;
-                case 'e':
-                    endTime = std::stod(argv[i]);
-                    hasEndTime = true;
-                    break;
-                case 'd':
-                    config.duration = std::stod(argv[i]);
-                    hasDuration = true;
-                    break;
-                case 's':
-                    config.samples_per_sec = std::stoi(argv[i]);
-                    break;
-                case 'l':
-                    config.min_freq = noteToFreq(argv[i]);
-                    break;
-                case 'u':
-                    config.max_freq = noteToFreq(argv[i]);
-                    break;
-                default:
-                    std::cerr << "未知选项: -" << argv[i-1][1] << std::endl;
-                    printUsage(argv[0]);
-                    return 1;
+            else if (arg == "-u") {
+                try {
+                    config.max_freq = noteToFreq(argv[++i]);
+                    std::cout << "设置最高频率为: " << config.max_freq << " Hz" << std::endl;
+                } catch (const std::exception& e) {
+                    config.max_freq = std::stod(argv[i]);
+                    std::cout << "设置最高频率为: " << config.max_freq << " Hz" << std::endl;
+                }
+            }
+            else if (arg == "-b") {
+                config.start_time = std::stod(argv[++i]);
+                hasStartTime = true;
+                std::cout << "设置开始时间为: " << config.start_time << " 秒" << std::endl;
+            }
+            else if (arg == "-e") {
+                endTime = std::stod(argv[++i]);
+                hasEndTime = true;
+                std::cout << "设置结束时间为: " << endTime.value() << " 秒" << std::endl;
+            }
+            else if (arg == "-d") {
+                config.duration = std::stod(argv[++i]);
+                hasDuration = true;
+                std::cout << "设置持续时间为: " << config.duration << " 秒" << std::endl;
+            }
+            else if (arg == "-h") {
+                // 帮助信息已经在前面处理过了
+                return 0;
+            }
+            else {
+                std::cerr << "未知选项: " << arg << std::endl;
+                return 1;
             }
         } catch (const std::exception& e) {
             std::cerr << "参数错误: " << e.what() << std::endl;
             return 1;
         }
     }
-    
+
     // 检查时间参数的组合
     int timeParamsCount = hasStartTime + hasDuration + hasEndTime;
     if (timeParamsCount > 2) {
         std::cerr << "错误：开始时间、结束时间、持续时间只能指定其中两个\n";
         return 1;
     }
-    
+
     // 根据指定的时间参数计算持续时间
     if (hasEndTime) {
         if (endTime.value() <= config.start_time) {
@@ -196,48 +245,35 @@ int main(int argc, char* argv[]) {
         }
         if (!hasDuration) {
             config.duration = endTime.value() - config.start_time;
+            std::cout << "计算得到持续时间为: " << config.duration << " 秒" << std::endl;
         }
     }
 
-    // 检查输入路径是文件还是目录
-    if (fs::is_directory(inputPath)) {
-        // 确保输出路径存在
+    // 创建输出目录
+    try {
         fs::create_directories(outputPath);
-        
-        // 遍历输入目录
+        std::cout << "已创建输出目录: " << outputPath << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "创建输出目录失败: " << e.what() << std::endl;
+        return 1;
+    }
+
+    // 处理输入
+    if (fs::is_directory(inputPath)) {
+        std::cout << "处理目录: " << inputPath << std::endl;
         for (const auto& entry : fs::directory_iterator(inputPath)) {
-            if (!entry.is_regular_file()) continue;
-            
-            // 检查文件扩展名
-            std::string ext = entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            
-            if (ext == ".wav" || ext == ".flac" || ext == ".ogg") {
-                // 构建输出文件路径
+            if (entry.path().extension() == ".wav" || entry.path().extension() == ".mp3") {
                 std::string outputFile = (fs::path(outputPath) / entry.path().filename()).string();
                 outputFile = outputFile.substr(0, outputFile.find_last_of('.')) + ".png";
-                
-                // 处理音频文件
                 processAudioFile(entry.path().string(), outputFile, config);
             }
         }
     } else {
-        // 单个文件处理
-        if (!fs::is_regular_file(inputPath)) {
-            std::cerr << "错误：输入文件不存在\n";
-            return 1;
-        }
-        
-        // 如果输出路径是目录，在其中创建输出文件
-        std::string outputFile = outputPath;
-        if (fs::is_directory(outputPath)) {
-            fs::path inputFilePath(inputPath);
-            outputFile = (fs::path(outputPath) / inputFilePath.filename()).string();
-            outputFile = outputFile.substr(0, outputFile.find_last_of('.')) + ".png";
-        }
-        
+        std::cout << "处理单个文件: " << inputPath << std::endl;
+        std::string outputFile = (fs::path(outputPath) / fs::path(inputPath).filename()).string();
+        outputFile = outputFile.substr(0, outputFile.find_last_of('.')) + ".png";
         processAudioFile(inputPath, outputFile, config);
     }
-    
+
     return 0;
 } 

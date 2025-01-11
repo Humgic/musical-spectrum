@@ -1,11 +1,12 @@
-#pragma once
+#ifndef SPECTROGRAM_HPP
+#define SPECTROGRAM_HPP
 
 #include <vector>
 #include <string>
-#include <opencv2/opencv.hpp>
 
-// 音符到频率的转换函数
-double noteToFreq(const std::string& note);
+#ifdef __APPLE__
+#include <CoreGraphics/CoreGraphics.h>
+#endif
 
 class Spectrogram {
 public:
@@ -17,24 +18,30 @@ public:
         double max_freq = 20000.0;   // 最高频率（Hz）
     };
     
-    Spectrogram();
-    
-    void generateSpectrogram(const std::vector<std::vector<double>>& specData, 
-                           const std::string& outputPath,
+    void generateSpectrogram(const std::vector<std::vector<double>>& specData,
+                           const std::string& outputFile,
                            int sampleRate,
-                           const Config& config,
-                           int height = 2400,
-                           int width = 3200);
-                           
-    double freqToY(double freq, int height, double minFreq, double maxFreq);
-                           
+                           const Config& config);
+
 private:
-    // 基础图像处理函数
-    cv::Mat convertToImage(const std::vector<std::vector<double>>& specData,
-                          int height, int width, int sampleRate,
-                          const Config& config);
-    void applyColorMap(cv::Mat& image);
-    void addPitchLabels(cv::Mat& image, int sampleRate, int fftSize, const Config& config);
+#ifdef __APPLE__
+    void generateImageCG(const std::vector<std::vector<double>>& data,
+                        const std::string& outputFile,
+                        int width, int height,
+                        double minFreq, double maxFreq,
+                        int sampleRate);
+#else
+    void generateImageStb(const std::vector<std::vector<double>>& data,
+                         const std::string& outputFile,
+                         int width, int height,
+                         double minFreq, double maxFreq,
+                         int sampleRate);
+#endif
+
+    // 辅助函数
+    double freqToY(double freq, int height, double minFreq, double maxFreq);
     std::pair<std::string, int> getNoteAndOctave(double freq);
     bool isWhiteKey(const std::string& note);
-}; 
+};
+
+#endif // SPECTROGRAM_HPP 

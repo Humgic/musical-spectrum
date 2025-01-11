@@ -27,3 +27,4 @@ spectrum_test
 *.swp
 *~
 
+build/\n*.tar.gz\n*.flac\n*.png
